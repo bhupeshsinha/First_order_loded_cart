@@ -1,0 +1,160 @@
+function createAndUploadCartsFromSheet() {
+  
+  const authToken = "your-token"; // Keep this hidden in production
+  
+  const inputSheetName = "Sheet1";
+  const statusSheetName = "FarmerCartStatus";
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inputSheet = ss.getSheetByName(inputSheetName);
+  if (!inputSheet) {
+    Logger.log("Input sheet not found.");
+    return;
+  }
+
+  const data = inputSheet.getDataRange().getValues();
+  const headers = data[0];
+  const rows = data.slice(1);
+
+
+
+    // ✅ Find index of 'state' and 'source' columns
+    const stateColIndex = headers.indexOf("state");
+    const sourceColIndex = headers.indexOf("source");
+
+    if (stateColIndex === -1 || sourceColIndex === -1) {
+      Logger.log("Required columns 'state' or 'source' not found.");
+      return;
+    }
+
+    // ✅ Update source field based on state
+    // rows.forEach((row, i) => {
+    //   const state = row[stateColIndex];
+    //   const currentSource = row[sourceColIndex];
+      
+    //   if (state === "CG" && (!currentSource || currentSource === "")) {
+    //     inputSheet.getRange(i + 2, sourceColIndex + 1).setValue("B2BCT");
+    //   }
+    // });
+const stateSourceMap = {
+  CG: "B2BCT",
+  HR: "B2BHR",
+  UP: "B2BUP",
+  MH: "B2BMH",
+  KR: "B2BKA",
+  MP: "B2BMP",
+  AD: "B2BAD",
+  TG: "B2BTS",
+  RJ: "B2BRJ",
+  BH: "B2BBH",
+  GJ: "B2BGJ"
+};
+
+// ✅ Fill source if empty and state matches
+rows.forEach((row, i) => {
+  const state = row[stateColIndex];
+  const currentSource = row[sourceColIndex];
+
+  if (stateSourceMap[state] && (!currentSource || currentSource === "")) {
+    inputSheet.getRange(i + 2, sourceColIndex + 1).setValue(stateSourceMap[state]);
+  }
+});
+
+
+
+  // ✅ Get index of cartUploadStatus column or add it if not found
+  let statusColIndex = headers.indexOf("cartUploadStatus");
+  if (statusColIndex === -1) {
+    headers.push("cartUploadStatus");
+    inputSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    statusColIndex = headers.length - 1;
+  }
+
+  const farmerCartMap = {};
+  const rowMap = {}; // 👈 store original row indexes for later updates
+
+  rows.forEach((row, i) => {
+    const rowData = {};
+    headers.forEach((key, idx) => {
+      rowData[key] = row[idx];
+    });
+
+    const farmerId = rowData["farmerId"];
+    const uploadStatus = row[statusColIndex];
+
+    //if (!farmerId || uploadStatus === "Uploaded") return; // ⛔ skip if already uploaded
+      if (!farmerId) return;
+
+      if (uploadStatus === "Uploaded") {
+        Logger.log(`Farmer ID: ${farmerId} already uploaded. Skipping.`);
+        return;
+      }
+
+
+    if (!farmerCartMap[farmerId]) {
+      farmerCartMap[farmerId] = {
+        farmerId: farmerId,
+        products: [],
+        source: rowData["source"]
+      };
+      rowMap[farmerId] = []; // Track all row numbers
+    }
+
+    farmerCartMap[farmerId].products.push({
+      productName: rowData["productName"],
+      skuCode: rowData["skuCode"],
+      quantity: parseInt(rowData["quantity"]),
+      appliedOffer: rowData["appliedOffer"] || "",
+      isAdding: true
+    });
+
+    rowMap[farmerId].push(i + 2); // Row number in Sheet (starts from 1)
+  });
+
+  const statusSheet = ss.getSheetByName(statusSheetName) || ss.insertSheet(statusSheetName);
+  statusSheet.clearContents();
+  statusSheet.appendRow(["farmerId", "productCount", "status", "response"]);
+
+  const url = "https://httpbin.org/put"; // test endpoint
+  let cartCreatedCount = 0;
+
+  for (const farmerId in farmerCartMap) {
+    const cartData = farmerCartMap[farmerId];
+    const productCount = cartData.products.length;
+
+    const options = {
+      method: "put",
+      contentType: "application/json",
+      headers: {
+        "source": cartData.source,
+        "x-authorization-token": authToken
+      },
+      payload: JSON.stringify(cartData),
+      muteHttpExceptions: true
+    };
+
+    let status, response;
+    try {
+      const res = UrlFetchApp.fetch(url, options);
+      status = res.getResponseCode();
+      response = res.getContentText();
+      if (status === 200) {
+        cartCreatedCount++;
+
+        // ✅ Update original inputSheet to mark as uploaded
+        const rowNumbers = rowMap[farmerId];
+        rowNumbers.forEach(rowNum => {
+          inputSheet.getRange(rowNum, statusColIndex + 1).setValue("Uploaded");
+        });
+      }
+    } catch (e) {
+      status = "Error";
+      response = e.toString();
+    }
+
+    Logger.log(`Farmer ID: ${farmerId}, Products: ${productCount}, Status: ${status}`);
+    statusSheet.appendRow([farmerId, productCount, status, response]);
+  }
+
+  Logger.log("Total test carts simulated: " + cartCreatedCount);
+}
