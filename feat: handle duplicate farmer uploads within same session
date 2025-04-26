@@ -1,0 +1,128 @@
+function uploadSelectedFarmerCarts() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const masterSheet = ss.getSheetByName("Sheet1"); 
+  const toUploadSheet = ss.getSheetByName("ToUploadFarmers"); 
+  const authToken = "your-auth-token";
+
+  if (!masterSheet || !toUploadSheet) {
+    Logger.log("Required sheet not found.");
+    return;
+  }
+
+  const masterData = masterSheet.getDataRange().getValues();
+  const masterHeaders = masterData[0];
+  const masterRows = masterData.slice(1);
+
+  const toUploadData = toUploadSheet.getDataRange().getValues();
+  const toUploadHeaders = toUploadData[0];
+  const toUploadRows = toUploadData.slice(1);
+
+  const masterIndex = {};
+  masterRows.forEach(row => {
+    const farmerId = row[masterHeaders.indexOf("farmerId")];
+    if (farmerId) masterIndex[farmerId] = masterIndex[farmerId] || [];
+    masterIndex[farmerId].push(row);
+  });
+
+  const farmerIdColIndex = toUploadHeaders.indexOf("farmerId");
+  let statusColIndex = toUploadHeaders.indexOf("cartUploadStatus");
+
+  if (statusColIndex === -1) {
+    toUploadHeaders.push("cartUploadStatus");
+    toUploadSheet.getRange(1, 1, 1, toUploadHeaders.length).setValues([toUploadHeaders]);
+    statusColIndex = toUploadHeaders.length - 1;
+  }
+
+  let statusSheet = ss.getSheetByName("FarmerCartStatus");
+  if (!statusSheet) {
+    statusSheet = ss.insertSheet("FarmerCartStatus");
+  } else {
+    statusSheet.clearContents();
+  }
+  statusSheet.appendRow(["farmerId", "productCount", "uploadStatus", "apiResponse"]);
+
+  const url = "https://httpbin.org/put"; // Test URL
+
+  const uploadedFarmerIds = new Set(); // ✅ Set to track uploaded farmer IDs during this run
+
+  toUploadRows.forEach((row, i) => {
+    const farmerId = row[farmerIdColIndex];
+    const currentStatus = row[statusColIndex];
+
+    if (!farmerId) return;
+
+    if (uploadedFarmerIds.has(farmerId)) {
+      // ✅ Already uploaded earlier in this run
+      Logger.log(`Farmer ID ${farmerId} already uploaded earlier. Marking as Already Uploaded.`);
+      toUploadSheet.getRange(i + 2, statusColIndex + 1).setValue("Already Uploaded");
+      statusSheet.appendRow([farmerId, 0, "Already Uploaded", "Already uploaded in this run."]);
+      return;
+    }
+
+    if (currentStatus === "Uploaded") {
+      // ✅ Was already uploaded before this run
+      Logger.log(`Farmer ID ${farmerId} was already Uploaded before. Marking as Already Uploaded.`);
+      toUploadSheet.getRange(i + 2, statusColIndex + 1).setValue("Already Uploaded");
+      statusSheet.appendRow([farmerId, 0, "Already Uploaded", "Previously uploaded."]);
+      uploadedFarmerIds.add(farmerId); // Important: add it so next occurrence also treated as Already Uploaded
+      return;
+    }
+
+    const cartRows = masterIndex[farmerId];
+    if (!cartRows || cartRows.length === 0) {
+      Logger.log(`Farmer ID: ${farmerId} not found in Master Data.`);
+      toUploadSheet.getRange(i + 2, statusColIndex + 1).setValue("Not Found");
+      statusSheet.appendRow([farmerId, 0, "Not Found", "Farmer ID missing in Sheet1"]);
+      return;
+    }
+
+    const source = cartRows[0][masterHeaders.indexOf("source")];
+
+    const cartData = {
+      farmerId: farmerId,
+      source: source,
+      products: cartRows.map(r => ({
+        productName: r[masterHeaders.indexOf("productName")],
+        skuCode: r[masterHeaders.indexOf("skuCode")],
+        quantity: parseInt(r[masterHeaders.indexOf("quantity")]),
+        appliedOffer: r[masterHeaders.indexOf("appliedOffer")] || "",
+        isAdding: true
+      }))
+    };
+
+    const options = {
+      method: "put",
+      contentType: "application/json",
+      headers: {
+        "source": source,
+        "x-authorization-token": authToken
+      },
+      payload: JSON.stringify(cartData),
+      muteHttpExceptions: true
+    };
+
+    try {
+      const res = UrlFetchApp.fetch(url, options);
+      const status = res.getResponseCode();
+      const apiResponse = res.getContentText();
+
+      if (status === 200) {
+        Logger.log(`Farmer ID: ${farmerId} uploaded successfully.`);
+        toUploadSheet.getRange(i + 2, statusColIndex + 1).setValue("Uploaded");
+        statusSheet.appendRow([farmerId, cartData.products.length, "Uploaded", apiResponse]);
+        uploadedFarmerIds.add(farmerId); // ✅ Mark as uploaded after success
+      } else {
+        Logger.log(`Farmer ID: ${farmerId} upload failed with code ${status}`);
+        toUploadSheet.getRange(i + 2, statusColIndex + 1).setValue(`Failed ${status}`);
+        statusSheet.appendRow([farmerId, cartData.products.length, `Failed ${status}`, apiResponse]);
+      }
+
+    } catch (e) {
+      Logger.log(`Error uploading Farmer ID: ${farmerId} -> ${e}`);
+      toUploadSheet.getRange(i + 2, statusColIndex + 1).setValue("Error");
+      statusSheet.appendRow([farmerId, cartData.products.length, "Error", e.toString()]);
+    }
+  });
+
+  Logger.log("Upload Script Completed ✅");
+}
