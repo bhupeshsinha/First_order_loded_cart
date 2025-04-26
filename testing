@@ -1,0 +1,92 @@
+function createAndUploadCartsFromSheet() {
+  
+  const authToken = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiIsImtpZCI6IkMwIn0.eyJzdWIiOjExODEzMTQzLCJwd2QiOiJwYmtkZjJfc2hhMjU2JDIwMDAwJFJwa29HZTFTaGM4NyQwOCs0MTlOQ3NWWldKYkc0ejNNMDhrRnFPWk0zWk5ObWx0TFR6dzcvd3JRPSIsImlhdCI6MTc0NTY0MjY0NiwiZXhwYXQiOjE3NDU2OTMwNDYsInR5cCI6IkNSTSIsImdycCI6WyJCMkJNSCIsIkIyQkdKIiwiQjJCUkoiLCJCMkJNUCIsIkIyQlVQIiwiQjJCQkgiLCJCMkJIUiIsIkIyQktBIiwiQjJCQUQiLCJCMkJDVCIsIkIyQlRTIl19.QsfCQAnXMxsT5cVeAOEnH6PeG_M1fR4T7g6uv6qL7Hs";
+
+  const inputSheetName = "Sheet1";
+  
+  const statusSheetName = "FarmerCartStatus";
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inputSheet = ss.getSheetByName(inputSheetName);
+  if (!inputSheet) {
+    Logger.log("Input sheet not found.");
+    return;
+  }
+
+  const data = inputSheet.getDataRange().getValues();
+  const headers = data[0];
+  const rows = data.slice(1);
+
+  const farmerCartMap = {};
+  rows.forEach(row => {
+    const rowData = {};
+    headers.forEach((key, idx) => {
+      rowData[key] = row[idx];
+    });
+
+    const farmerId = rowData["farmerId"];
+    if (!farmerId) return;  // Skip empty rows
+
+    if (!farmerCartMap[farmerId]) {
+      farmerCartMap[farmerId] = {
+        farmerId: farmerId,
+        products: [],
+        source: rowData["source"]
+      };
+    }
+
+    farmerCartMap[farmerId].products.push({
+      productName: rowData["productName"],
+      skuCode: rowData["skuCode"],
+      quantity: parseInt(rowData["quantity"]),
+      appliedOffer: rowData["appliedOffer"] || "",
+      isAdding: true
+    });
+  });
+
+  const statusSheet = ss.getSheetByName(statusSheetName) || ss.insertSheet(statusSheetName);
+  statusSheet.clearContents();
+  statusSheet.appendRow(["farmerId", "status", "response"]);
+
+  //const url = "https://httpbin.org/put";  // 🧪 test endpoint
+  const url = "https://crm.agrostar.in/cartservice/v3/farmermulticart/";  
+
+  let cartCreatedCount = 0;
+
+  for (const farmerId in farmerCartMap) {
+    const cartData = farmerCartMap[farmerId];
+    const options = {
+      method: "put",
+      contentType: "application/json",
+      headers: {
+        "source": cartData.source,
+        "x-authorization-token": authToken
+      },
+      payload: JSON.stringify(cartData),
+      muteHttpExceptions: true
+    };
+
+    let status, response;
+    try {
+      const res = UrlFetchApp.fetch(url, options);
+      status = res.getResponseCode();
+      response = res.getContentText();
+
+
+      Logger.log("Response Code: " + status);
+      //Logger.log("Response Body: " + response);
+
+
+      if (status === 200) cartCreatedCount++;
+    } catch (e) {
+      status = "Error";
+      response = e.toString();
+      Logger.log("Error for farmerId " + farmerId + ": " + response);
+    }
+
+    Logger.log(`Farmer ID: ${farmerId}, Status: ${status}`);
+    statusSheet.appendRow([farmerId, status, response]);
+  }
+
+  Logger.log("Total test carts simulated: " + cartCreatedCount);
+}
