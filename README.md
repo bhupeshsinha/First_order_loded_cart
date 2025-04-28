@@ -1,7 +1,6 @@
 # 📋 Farmer Cart Upload Automation  
 ![Built with Google Apps Script](https://img.shields.io/badge/Built%20with-Google%20Apps%20Script-4285F4?logo=google&logoColor=white)  
 ![Status: Production Ready](https://img.shields.io/badge/Status-Production%20Ready-brightgreen)  
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ---
 
