@@ -1,0 +1,141 @@
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('Upload Cart')
+    .addItem('Upload Now', 'uploadSelectedFarmerCarts') // Link menu to function
+    .addToUi();
+}
+
+function uploadSelectedFarmerCarts() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const masterSheet = ss.getSheetByName("Extract 1");
+  const toUploadSheet = ss.getSheetByName("ToUploadFarmers");
+  const authToken = "your-auth-token"; // Replace with your real token
+  const apiUrl = "https://httpbin.org/put"; // Test API URL
+
+  if (!masterSheet || !toUploadSheet) {
+    SpreadsheetApp.getUi().alert('❌ Required sheets not found.');
+    return;
+  }
+
+  const masterData = masterSheet.getDataRange().getValues();
+  const masterHeaders = masterData[0];
+  const masterRows = masterData.slice(1);
+
+  const toUploadData = toUploadSheet.getDataRange().getValues();
+  const toUploadHeaders = toUploadData[0];
+  const toUploadRows = toUploadData.slice(1);
+
+  // Build farmerId -> all rows mapping
+  const masterIndex = {};
+  masterRows.forEach(row => {
+    const farmerId = row[masterHeaders.indexOf("farmerId")];
+    if (farmerId) {
+      if (!masterIndex[farmerId]) {
+        masterIndex[farmerId] = [];
+      }
+      masterIndex[farmerId].push(row);
+    }
+  });
+
+  // Prepare "cartUploadStatus" column
+  const farmerIdColIndex = toUploadHeaders.indexOf("farmerId");
+  let statusColIndex = toUploadHeaders.indexOf("cartUploadStatus");
+
+  if (statusColIndex === -1) {
+    toUploadHeaders.push("cartUploadStatus");
+    toUploadSheet.getRange(1, 1, 1, toUploadHeaders.length).setValues([toUploadHeaders]);
+    statusColIndex = toUploadHeaders.length - 1;
+  }
+
+  // Prepare Status Sheet
+  let statusSheet = ss.getSheetByName("FarmerCartStatus");
+  if (!statusSheet) {
+    statusSheet = ss.insertSheet("FarmerCartStatus");
+  } else {
+    statusSheet.clearContents();
+  }
+  statusSheet.appendRow(["farmerId", "productCount", "uploadStatus", "apiResponse"]);
+
+  // Track already uploaded farmerIds
+  const alreadyUploadedFarmerIds = new Set();
+  toUploadRows.forEach(row => {
+    const farmerId = row[farmerIdColIndex];
+    const currentStatus = row[statusColIndex];
+    if (farmerId && currentStatus === "Uploaded") {
+      alreadyUploadedFarmerIds.add(farmerId);
+    }
+  });
+
+  const seenInThisRun = new Set(); // Track seen farmers in current run
+
+  // Process each farmer
+  toUploadRows.forEach((row, i) => {
+    const farmerId = row[farmerIdColIndex];
+    if (!farmerId) return;
+
+    if (alreadyUploadedFarmerIds.has(farmerId)) {
+      toUploadSheet.getRange(i + 2, statusColIndex + 1).setValue("Already Uploaded");
+      statusSheet.appendRow([farmerId, 0, "Already Uploaded", "Previously uploaded."]);
+      return;
+    }
+
+    if (seenInThisRun.has(farmerId)) {
+      toUploadSheet.getRange(i + 2, statusColIndex + 1).setValue("Already Uploaded");
+      statusSheet.appendRow([farmerId, 0, "Already Uploaded", "Already uploaded in this run."]);
+      return;
+    }
+
+    const cartRows = masterIndex[farmerId];
+    if (!cartRows || cartRows.length === 0) {
+      toUploadSheet.getRange(i + 2, statusColIndex + 1).setValue("Not Found");
+      statusSheet.appendRow([farmerId, 0, "Not Found", "Farmer ID not found in Extract 1"]);
+      return;
+    }
+
+    const source = cartRows[0][masterHeaders.indexOf("source")];
+
+    const cartData = {
+      farmerId: farmerId,
+      source: source,
+      products: cartRows.map(r => ({
+        productName: r[masterHeaders.indexOf("productName")],
+        skuCode: r[masterHeaders.indexOf("skuCode")],
+        quantity: parseInt(r[masterHeaders.indexOf("quantity")], 10),
+        appliedOffer: r[masterHeaders.indexOf("appliedOffer")] || "",
+        isAdding: true
+      }))
+    };
+
+    const options = {
+      method: "put",
+      contentType: "application/json",
+      headers: {
+        "source": source,
+        "x-authorization-token": authToken
+      },
+      payload: JSON.stringify(cartData),
+      muteHttpExceptions: true
+    };
+
+    try {
+      const res = UrlFetchApp.fetch(apiUrl, options);
+      const status = res.getResponseCode();
+      const apiResponse = res.getContentText();
+
+      if (status === 200) {
+        toUploadSheet.getRange(i + 2, statusColIndex + 1).setValue("Uploaded");
+        statusSheet.appendRow([farmerId, cartData.products.length, "Uploaded", apiResponse]);
+        seenInThisRun.add(farmerId);
+      } else {
+        toUploadSheet.getRange(i + 2, statusColIndex + 1).setValue(`Failed ${status}`);
+        statusSheet.appendRow([farmerId, cartData.products.length, `Failed ${status}`, apiResponse]);
+      }
+    } catch (e) {
+      toUploadSheet.getRange(i + 2, statusColIndex + 1).setValue("Error");
+      statusSheet.appendRow([farmerId, cartData.products.length, "Error", e.toString()]);
+    }
+  });
+
+  SpreadsheetApp.getUi().alert('✅ Upload completed!');
+  Logger.log("✅ Upload Script Completed");
+}
