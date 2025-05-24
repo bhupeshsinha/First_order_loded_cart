@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AgroStar Leaderboard</title>
+  <link rel="stylesheet" href="badge_for_4_to_10.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&family=Raleway:wght@500;600&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <style>
+    .badge {
+      display: inline-block;
+      color: black;
+      padding: 2px 6px;
+      border-radius: 10px;
+      font-size: 0.9em;
+      margin-left: 6px;
+    }
+    .entry {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 10px;
+      border-bottom: 1px solid #ccc;
+    }
+  </style>
+</head>
+<body>
+  <!-- User Details -->
+  <div id="userDetails" class="user-info shadow-box">
+    <div class="user-row">
+      <div class="label"><i class="fas fa-user"></i> Name:</div>
+      <div class="value" id="displayName"></div>
+    </div>
+    <div class="user-row">
+      <div class="label"><i class="fas fa-briefcase"></i> Designation:</div>
+      <div class="value" id="displayDesignation"></div>
+    </div>
+  </div>
+
+  <!-- Role Selection -->
+  <h1>Choose a Role to View the Leaderboard</h1>
+  <div id="roleSelector" class="panel"></div>
+
+  <!-- Metric Buttons -->
+  <div id="metricSelector" class="panel" style="display:none;">
+    <button data-metric="total_revenue">Total Revenue</button>
+    <button data-metric="total_return">Total Return</button>
+    <button data-metric="total_class_ab_return">Class AB Return</button>
+    <button data-metric="arpu">ARPU</button>
+  </div>
+
+  <!-- Leaderboard Section -->
+  <div class="leaderboard" style="display:none;">
+    <h2>🏆 Leaderboard for <span id="selectedRoleText"></span> - <span id="selectedMetricText"></span></h2>
+    
+    <div class="toggle-wrapper">
+      <span class="toggle-label">State</span>
+      <label class="switch">
+        <input type="checkbox" id="levelToggle" onchange="toggleLevel()" />
+        <span class="slider round"></span>
+      </label>
+      <span class="toggle-label">Org</span>
+    </div>
+
+    <div class="podium" id="podium"></div>
+    <div class="rest-list" id="rest-list"></div>
+  </div>
+
+  <script>
+    const BASE_URL = 'https://script.google.com/macros/s/AKfycbyXujh-1t2SZxKwI3b2fsZXW995X5ijfdkwj5Z1WlXuA-n4MfF1WUasvTDXouBzkdBxLw/exec';
+
+    const roleHierarchy = {
+      cm: ['cm', 'tm', 'sm'],
+      tm: ['tm', 'sm'],
+      sm: ['sm']
+    };
+
+    let selectedRole = '', selectedMetric = '', currentLevel = 'state';
+
+    window.onload = function () {
+      const name = localStorage.getItem('name');
+      const designation = localStorage.getItem('designation');
+
+      if (name && designation) {
+        document.getElementById('displayName').textContent = name;
+        document.getElementById('displayDesignation').textContent = designation;
+        initRoleOptions(designation.toLowerCase());
+
+        // Auto-select user's own role
+        selectedRole = designation.toLowerCase();
+        document.getElementById('selectedRoleText').textContent = selectedRole.toUpperCase();
+
+        const roleButtons = document.querySelectorAll('#roleSelector button');
+        roleButtons.forEach(btn => {
+          if (btn.dataset.role === selectedRole) {
+            btn.classList.add('active');
+          }
+        });
+
+        document.getElementById('metricSelector').style.display = 'flex';
+
+        const firstMetricButton = document.querySelector('#metricSelector button');
+        if (firstMetricButton) {
+          firstMetricButton.classList.add('active');
+          selectedMetric = firstMetricButton.dataset.metric;
+          document.getElementById('selectedMetricText').textContent = firstMetricButton.textContent;
+          fetchLeaderboard();
+        }
+
+      } else {
+        document.getElementById('userDetails').innerHTML = "<strong>User not logged in.</strong>";
+      }
+    };
+
+    function initRoleOptions(designation) {
+      const roles = roleHierarchy[designation] || [];
+      const roleSelector = document.getElementById('roleSelector');
+      roleSelector.innerHTML = roles.map(role =>
+        `<button data-role="${role}" onclick="handleRoleSelect('${role}')">${role.toUpperCase()}</button>`
+      ).join('');
+    }
+
+    function handleRoleSelect(role) {
+      selectedRole = role;
+      document.getElementById('selectedRoleText').textContent = role.toUpperCase();
+
+      const roleButtons = document.querySelectorAll('#roleSelector button');
+      roleButtons.forEach(btn => btn.classList.remove('active'));
+      const clickedButton = document.querySelector(`#roleSelector button[data-role="${role}"]`);
+      if (clickedButton) clickedButton.classList.add('active');
+
+      document.getElementById('metricSelector').style.display = 'flex';
+      fetchLeaderboard();
+    }
+
+    document.addEventListener('click', (e) => {
+      if (e.target.matches('#metricSelector button')) {
+        document.querySelectorAll('#metricSelector button').forEach(btn => btn.classList.remove('active'));
+        e.target.classList.add('active');
+        selectedMetric = e.target.dataset.metric;
+        document.getElementById('selectedMetricText').textContent = e.target.textContent;
+        fetchLeaderboard();
+      }
+    });
+
+    function toggleLevel() {
+      const isChecked = document.getElementById('levelToggle').checked;
+      currentLevel = isChecked ? 'org' : 'state';
+      fetchLeaderboard();
+    }
+
+    function fetchLeaderboard() {
+      if (!selectedRole || !selectedMetric) return;
+      document.querySelector('.leaderboard').style.display = 'block';
+
+      fetch(`${BASE_URL}?role=${selectedRole}&metric=${selectedMetric}&level=${currentLevel}`)
+        .then(res => res.json())
+        .then(data => renderLeaderboard(data))
+        .catch(err => console.error('Error fetching leaderboard:', err));
+    }
+
+    function renderLeaderboard(data) {
+      const podium = document.getElementById('podium');
+      const restList = document.getElementById('rest-list');
+      podium.innerHTML = '';
+      restList.innerHTML = '';
+
+      const medals = ['🥇', '🥈', '🥉'];
+      const podiumOrder = [1, 0, 2];
+
+      podiumOrder.forEach(i => {
+        if (data[i]) {
+          const card = document.createElement('div');
+          card.className = 'podium-card';
+          if (i === 0) card.classList.add('first');
+          else if (i === 1) card.classList.add('second');
+          else if (i === 2) card.classList.add('third');
+
+          card.innerHTML = `
+            <div class="medal">${medals[i]}</div>
+            <h2>${data[i].name}</h2>
+            <p>${data[i].score} pts</p>
+          `;
+          podium.appendChild(card);
+        }
+      });
+
+
+      data.slice(3, 10).forEach((entry, index) => {
+        let badgeHTML = '';
+        const rank = index + 4;
+        if (rank >= 4 && rank <= 10) {
+            badgeHTML = `<span class="badge">🏅</span>`;
+        }
+
+        restList.innerHTML += `
+        <div class="entry">
+            <span class="entry-rank-name">${badgeHTML}${rank}. ${entry.name}</span>
+            <span class="entry-score">${entry.score} pts</span>
+        </div>
+        `;
+
+        });
+
+    }
+  </script>
+</body>
+</html>
