@@ -1,6 +1,6 @@
 function createAndUploadCartsFromSheet() {
   
-  const authToken = "your-token"; // Keep this hidden in production
+  const authToken = "your-token"; //  Keep this hidden in production
   
   const inputSheetName = "Sheet1";
   const statusSheetName = "FarmerCartStatus";
